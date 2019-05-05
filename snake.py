@@ -70,8 +70,8 @@ class Game:
             pygame.init()
             pygame.display.set_caption(title)
             self.display_surf = pygame.display.set_mode((width * step, height * step), pygame.HWSURFACE)
-            self.snake_image = pygame.image.load('snake.png').convert()
-            self.apple_image = pygame.image.load('apple.png').convert()
+            self.snake_image = pygame.image.load('resources/snake.png').convert()
+            self.apple_image = pygame.image.load('resources/apple.png').convert()
             self.clock = pygame.time.Clock()
             self.font = pygame.font.Font(None, 20)
 
