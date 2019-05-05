@@ -1,6 +1,6 @@
 import pygame
 import numpy as np
-from random import randrange
+from random import sample
 
 
 class Snake:
@@ -44,13 +44,10 @@ class Apple:
         self.height = height
         self.step = step
         self.pos = np.array((.8 * width, .8 * height))
+        self.possible = {(i,j) for i in range(width) for j in range(height)}
 
     def new_pos(self, snake_body):
-        while True:
-            x = np.array((randrange(self.width), randrange(self.height)))
-            if not (x == snake_body).all(1).any():
-                break
-        self.pos = x
+        self.pos = np.array(sample(self.possible-set(tuple(x) for x in snake_body), 1)[0])
 
     def draw(self, surface, image):
         surface.blit(image, self.pos * self.step)
@@ -74,6 +71,17 @@ class Game:
             self.apple_image = pygame.image.load('resources/apple.png').convert()
             self.clock = pygame.time.Clock()
             self.font = pygame.font.Font(None, 20)
+            str_start = pygame.font.Font(None, width).render('PRESS ENTER TO START', True, (255,255,255, 0.3))
+            self.display_surf.blit(str_start, (width//3*step, height//2*step))
+            pygame.display.update()
+            start = False
+            while not start:
+                for event in pygame.event.get():
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_RETURN:
+                            start = True
+                            break
+
 
     def restart(self):
         self.score = self.length * -10
