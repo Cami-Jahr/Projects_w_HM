@@ -33,9 +33,10 @@ class Snake:
         if (self.direction < 2 and direction > 1) or (self.direction > 1 and direction < 2):
             self.direction = direction
 
-    def draw(self, surface, image):
-        for i in range(len(self.body)):
-            surface.blit(image, self.body[i] * self.step)
+    def draw(self, surface, head_image, body_image):
+        surface.blit(head_image, self.body[0] * self.step)
+        for i in range(1, len(self.body)):
+            surface.blit(body_image, self.body[i] * self.step)
 
 
 class Apple:
@@ -44,10 +45,10 @@ class Apple:
         self.height = height
         self.step = step
         self.pos = np.array((.8 * width, .8 * height))
-        self.possible = {(i,j) for i in range(width) for j in range(height)}
+        self.possible = {(i, j) for i in range(width) for j in range(height)}
 
     def new_pos(self, snake_body):
-        self.pos = np.array(sample(self.possible-set(tuple(x) for x in snake_body), 1)[0])
+        self.pos = np.array(sample(self.possible - set(tuple(x) for x in snake_body), 1)[0])
 
     def draw(self, surface, image):
         surface.blit(image, self.pos * self.step)
@@ -63,16 +64,17 @@ class Game:
         self.width = width
         self.height = height
         self.step = step
+        pygame.init()
+        pygame.display.set_caption(title)
+        self.display_surf = pygame.display.set_mode((width * step, height * step), pygame.HWSURFACE)
+        self.head_image = pygame.image.load('resources/head.png').convert()
+        self.body_image = pygame.image.load('resources/snake.png').convert()
+        self.apple_image = pygame.image.load('resources/apple.png').convert()
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.Font(None, 20)
         if not ai:
-            pygame.init()
-            pygame.display.set_caption(title)
-            self.display_surf = pygame.display.set_mode((width * step, height * step), pygame.HWSURFACE)
-            self.snake_image = pygame.image.load('resources/snake.png').convert()
-            self.apple_image = pygame.image.load('resources/apple.png').convert()
-            self.clock = pygame.time.Clock()
-            self.font = pygame.font.Font(None, 20)
-            str_start = pygame.font.Font(None, width).render('PRESS ENTER TO START', True, (255,255,255, 0.3))
-            self.display_surf.blit(str_start, (width//3*step, height//2*step))
+            str_start = pygame.font.Font(None, width).render('PRESS ENTER TO START', True, (255, 255, 255, 0.3))
+            self.display_surf.blit(str_start, (width // 3 * step, height // 2 * step))
             pygame.display.update()
             start = False
             while not start:
@@ -82,7 +84,6 @@ class Game:
                             start = True
                             break
 
-
     def restart(self):
         self.score = self.length * -10
         self.snake = Snake(self.length, self.width, self.height, self.step)
@@ -90,7 +91,7 @@ class Game:
 
     def render(self):
         self.display_surf.fill((0, 0, 0))
-        self.snake.draw(self.display_surf, self.snake_image)
+        self.snake.draw(self.display_surf, self.head_image, self.body_image)
         self.apple.draw(self.display_surf, self.apple_image)
         # str_score = self.font.render('Score: {}'.format(self.getScore()), True, (255,255,255, 0.3))
         # self.display_surf.blit(str_score, (5, 5))
@@ -124,8 +125,8 @@ class Game:
                         return self.get_score()
                     self.snake.move(event.key - 273)
             self.snake.update()
-            self.render()
-            self.clock.tick(20)
+        self.render()
+        self.clock.tick(20)
         return False
 
 
