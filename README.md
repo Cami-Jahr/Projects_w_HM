@@ -1,1 +1,2 @@
-# Evo_Alg_Snake
+# Various shared projects between Joachim Jahr and Halvor Meen
+
