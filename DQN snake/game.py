@@ -1,7 +1,7 @@
 import pygame
 import numpy as np
 from random import sample
-from math import log
+from math import log, ceil
 
 
 class Game:
@@ -27,7 +27,7 @@ class Game:
             height = width  # Assure cubic from game itself if ai
         self.ai = ai
         self.score = 0
-        self.length = length
+        self.score_balancer = -length
         self.width = width
         self.height = height
         self.pixels_per_unit = fit_to_size // width
@@ -71,7 +71,6 @@ class Game:
         return 4
 
     def restart(self):
-        self.score = self.length * -10
         self.snake.restart()
         self.apple.restart()
         self.render()
@@ -90,26 +89,32 @@ class Game:
 
     def distance_head_to_apple(self):
         """Using manhattan distance, euclidean distance might be better"""
-        return abs(self.snake.body[0][0] - self.apple.pos[0]) + abs(self.snake.body[0][1] - self.apple.pos[1])
+        return abs(self.snake.body[0][0] - self.apple.pos[0]) ** 2 + abs(self.snake.body[0][1] - self.apple.pos[1]) ** 2
 
-    def get_score(self):
-        if self.score:
-            return self.score
-        return self.distance_reward_value
+    def distance_value(self, new_distance):
+        return log(
+            (self.snake.current_length + self.prev_distance_head_to_apple) / (self.snake.current_length + new_distance),
+            self.snake.current_length)
+
+    def get_turn_score(self):
+        """Reward + distance reward function"""
+        return self.score or self.distance_reward_value
+
+    def get_final_score(self):
+        return self.score_balancer + self.snake.current_length
 
     def get_image(self):
         """
         Get a image of the current game state as a (width, height, 3) ndarray
         representing the rbg colours of each pixel
         """
-        # print(pygame.surfarray.array3d(self.game_logic_surf).transpose((2, 1, 0)))
         return pygame.surfarray.array3d(self.game_logic_surf).transpose((2, 1, 0))
 
     def execute(self, move=2):
         """
         Execute the input move if ai, else pygame event, and render outcome
         :param move: int in [0, 3]
-        :return: score : int if game is over, else False
+        :return: (done, length, score)
         """
         self.score = 0
         if self.ai:
@@ -120,7 +125,7 @@ class Game:
                     pygame.quit()
                 if event.type == pygame.KEYDOWN:
                     if event.key == 27:
-                        return False, self.get_score()
+                        return self.turn_result(False)
                     self.snake.move(event.key - 273)
         self.snake.update()
         if np.array_equal(self.snake.body[0], self.apple.pos):
@@ -130,13 +135,16 @@ class Game:
 
         new_distance = self.distance_head_to_apple()
         # Calculate distance reward as defined in Wei et al.
-        self.distance_reward_value = log((self.length + self.prev_distance_head_to_apple) / (self.length + new_distance), self.length)
+        self.distance_reward_value = self.distance_value(new_distance)
         self.prev_distance_head_to_apple = new_distance
         self.render()
         if self.snake.check_crash():
             self.score = -1
-            return True, self.get_score()
-        return False, self.get_score()
+            return self.turn_result(True)
+        return self.turn_result(False)
+
+    def turn_result(self, crashed):
+        return crashed, self.snake.current_length, self.get_turn_score()
 
 
 class Snake:
@@ -152,14 +160,17 @@ class Snake:
         self.directions = np.array([(0, -1), (0, 1), (1, 0), (-1, 0)])
         self.grow_pos = False
         self.length = length
+        self.current_length = length
 
     def restart(self):
         self.body = np.array([(x, 2) for x in range(2 + self.length, 2, -1)])
         self.direction = 2
         self.grow_pos = False
+        self.current_length = self.length
 
     def update(self):
         if self.grow_pos:
+            self.current_length += 1
             self.body = np.vstack([self.body[0] + self.directions[self.direction], self.body])
             self.grow_pos = False
         else:
@@ -217,5 +228,5 @@ if __name__ == '__main__':
     game = Game(ai=False, width=14, height=14, render=True)
     points = done = False
     while done is False:
-        done, points = game.execute()
+        done, *_ = game.execute()
     print(points)
