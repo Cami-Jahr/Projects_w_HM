@@ -9,7 +9,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torchvision.transforms as T
 from sys import argv
-from math import ceil
+from math import ceil, floor
 
 
 def get_screen():
@@ -47,17 +47,17 @@ def get_command_line_params() -> None:
 
 def select_action(state_history, _type="NORMAL"):
     """
-    :param state_history: 
+    :param state_history:
     :param _type: May be "NORMAL", "RANDOM" or "OPTIMAL", defaults to "NORMAL"
     :return: best action as int in [0, 3] according to type selection rule
     """
     if _type == "OPTIMAL":
-        return policy_net(state_history).max(1)[1].view(1, 1)
+        return model(state_history).max(1)[1].view(1, 1)
     elif _type == "RANDOM":
         return torch.tensor([[randrange(valid_actions)]], device=device, dtype=torch.long)
     else:
-        if random() > (EXPLORATION_START - EXPLORATION_END) - EXPLORATION_decay * turn_counter:
-            return policy_net(state_history).max(1)[1].view(1, 1)
+        if random() > (EPSILON_START - EPSILON_END) - EPSILON_decay * turn_counter:
+            return model(state_history).max(1)[1].view(1, 1)
         else:
             return torch.tensor([[randrange(valid_actions)]], device=device, dtype=torch.long)
 
@@ -91,9 +91,9 @@ def plot_scores():
     plt.ylabel('Scores')
     plt.plot(scores_t.numpy())
     # Take 100 episode averages and plot them too
-    if len(scores_t) >= 100:
-        means = scores_t.unfold(0, 100, 1).mean(1).view(-1)
-        means = torch.cat((torch.zeros(99), means))
+    if len(scores_t) >= 10:
+        means = scores_t.unfold(0, 10, 1).mean(1).view(-1)
+        means = torch.cat((torch.zeros(9), means))
         plt.plot(means.numpy())
 
     plt.pause(0.001)  # pause a bit so that plots are updated
@@ -103,57 +103,32 @@ def plot_scores():
 
 
 def optimize_model():
-    if len(memory) < BATCH_SIZE:
+    if len(memory) < BATCH_SIZE:  # Should not be possible unless warm-up is removed
         return
     transitions = memory.sample(BATCH_SIZE)
     # Transpose into named tuple
     batch = Transition(*zip(*transitions))
-    # print(batch)
-    # print(transitions, batch)
-    # Compute a mask of non-final states and concatenate the batch elements
-    # (a final state would've been the one after which simulation ended)
-    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
-                                            batch.next_state)), device=device, dtype=torch.long)
-    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).to(device)
-    state_batch = torch.cat(batch.state).to(device)
-    action_batch = torch.cat(batch.action).to(device)
-    reward_batch = torch.cat(batch.reward).to(device)
-    # print(state_batch)
 
-    # Compute Q(s_t, a) - the model computes Q(s_t), then we select the
-    # columns of actions taken. These are the actions which would've been taken
-    # for each batch state according to policy_net
-    # print("A", action_batch.shape)
-    state_action_values = policy_net(state_batch).gather(1, action_batch)
+    state_batch = torch.cat(batch.state).to(device)  # SJ
+    action_batch = torch.cat(batch.action).float().to(device)  # A
+    reward_batch = torch.cat(batch.reward).to(device)  # R
+    next_state_batch = torch.cat(batch.next_state).to(device)  # SJ1
+    terminal_batch = torch.cat(batch.terminal).to(device)  # SJ1
 
-    # Compute V(s_{t+1}) for all next states.
-    # Expected values of actions for non_final_next_states are computed based
-    # on the "older" target_net; selecting their best reward with max(1)[0].
-    # This is merged based on the mask, such that we'll have either the expected
-    # state value or 0 in case the state was final.
-    next_state_values = torch.zeros(BATCH_SIZE, device=device)
-    # print("NFNS", non_final_next_states.shape)
-    next_state_values[non_final_mask] = policy_net(non_final_next_states).max(1)[0].detach()
-    # Compute the expected Q values
-    # print(next_state_values)
-    # print("R", reward_batch)
-    # print((next_state_values * GAMMA))
-    # print((next_state_values * GAMMA) + reward_batch)
-    expected_state_action_values = (next_state_values * GAMMA) + reward_batch
-
-    # Compute Huber loss
-    loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
-
-    # Optimize the model
+    current_prediction_batch = model(state_batch)
+    next_prediction_batch = model(next_state_batch)
+    y_batch = torch.tensor(
+        tuple(map(lambda inputs: inputs[0] if inputs[1] else inputs[0] + GAMMA * torch.max(inputs[2]),
+                  zip(reward_batch, terminal_batch, next_prediction_batch))), device=device, dtype=torch.float)
+    q_batch = torch.sum(current_prediction_batch * action_batch, dim=1)
     optimizer.zero_grad()
+    loss = criterion(q_batch, y_batch)
     loss.backward()
-    for param in policy_net.parameters():
-        param.grad.data.clamp_(-1, 1)
     optimizer.step()
 
 
 def calculate_delay_punishment_maximum(length):
-    return ceil(.7 * length) + WIDTH
+    return floor(.7 * length) + WIDTH
 
 
 def calc_time_after_apple_of_no_learning(length):
@@ -164,7 +139,6 @@ def main():
     global turn_counter
 
     def perform_round(cold_start=False):
-        print(memory)
         game.restart()
         state = get_screen()
         prev_states.empty()
@@ -180,50 +154,56 @@ def main():
             action = select_action(prev_series_of_states, _type="RANDOM" if cold_start else "NORMAL")
             # Note: While params returned from the game could be deducted from state,
             # this is foregone here for the sake of ease of writing, readability and performance
-            done, length, reward = game(action.item())
+            done, ate, length, reward = game(action.item())
             turns_since_apple += 1
-            if reward == 1:
+            if ate:
+                # if turns_since_apple < post_apple_no_learn:
+                #     reward = 0
                 turns_since_apple = 0
                 max_time_before_delay_punishment = calculate_delay_punishment_maximum(length)
                 post_apple_no_learn = calc_time_after_apple_of_no_learning(LENGTH)
-            elif reward == -1:
-                # Don't want to skip collide paths
+            elif done:
+                # Don't want to skip collide learning
                 pass
             elif turns_since_apple < post_apple_no_learn:
                 # Do not remember nor learn if recently picket up an apple, to avoid
                 # punishing behaviour after successful task
                 continue
-            if turns_since_apple == max_time_before_delay_punishment:
+            elif turns_since_apple == max_time_before_delay_punishment:
                 # Reduce reward for all max_time_before_delay_punishment previous turns
                 memory.reduce_score_of_previous_n_by_p(max_time_before_delay_punishment - 1, 0.5 / length)
-            if turns_since_apple >= max_time_before_delay_punishment:
                 reward -= 0.5 / length
+            elif turns_since_apple > max_time_before_delay_punishment:
+                reward -= 0.5 / length
+
+            if reward < -1:
+                reward = -1
+            elif reward > 1:
+                reward = 1
 
             reward = torch.tensor([reward], device=device, dtype=torch.float)
             state = get_screen()
-
+            terminal = torch.tensor([done], device=device, dtype=torch.float)
             prev_states.append(state)
             new_series_of_states = prev_states.get()
-            memory.push(prev_series_of_states, action, new_series_of_states, reward,
-                        primary_buffer=abs(reward.item()) > M1_THRESHOLD)
+            memory.push(prev_series_of_states, action, new_series_of_states, terminal, reward,
+                        primary_buffer=abs(reward.item()) >= M1_THRESHOLD)
+            prev_series_of_states = new_series_of_states
             if not cold_start:
                 optimize_model()
         return steps
 
-    print("Running cold start")
+    print("Running warm-up to counteract cold start")
     s = 0
     while s < NUM_COLD_START_STEPS or len(memory) < BATCH_SIZE:
         s += perform_round(cold_start=True)
 
     print("Running main")
-    steps_between_plots = NUM_EPISODES // NR_OF_PLOTS
     for i_episode in range(NUM_EPISODES):
         episode_durations.append(perform_round())
         episode_scores.append(game.get_final_score())
-        if (i_episode + 1) % steps_between_plots == 0:
-            plot_durations()
-            plot_scores()
         memory.iterate_ratio()
+        print(turn_counter, (EPSILON_START - EPSILON_END) - EPSILON_decay * turn_counter)
         turn_counter += 1
 
     plot_durations()
@@ -252,23 +232,24 @@ def show_a_run_current_network():
 
 
 # Initialization params uppercase should be changed to empirically
-BATCH_SIZE = 32
-NUM_COLD_START_STEPS = 10000
-NUM_EPISODES = 500
-REPLAY_SIZE = 100000
+BATCH_SIZE = 64
+LR = 1e-6
+NUM_COLD_START_STEPS = 5000
+NUM_EPISODES = 1000
+REPLAY_SIZE = 1000000
 WIDTH = 12  # == height
 LENGTH = 3
 P = .4
 K = 10
-M1_M2_weight_initial = 0.9
-M1_M2_weight_final = 0.5
+M1_M2_WEIGHT_INITIAL = 0.8
+M1_M2_WEIGHT_FINAL = 0.5
 M1_M2_WEIGHT_ITERATIONS = NUM_EPISODES // 2
 M1_THRESHOLD = 0.5
-EXPLORATION_START = 0.95
-EXPLORATION_END = 0
-NUM_EXPLORATION_EPISODES = int(NUM_EPISODES * 0.9)  # Use optimal for past 20% of runs
-GAMMA = .999
-NR_OF_PLOTS = 5
+EPSILON_START = 0.7
+EPSILON_END = 0
+NUM_EPSILON_EPISODES = int(NUM_EPISODES * 0.8)  # Use optimal for past 20% of runs
+GAMMA = .99
+NR_OF_PLOTS = 1
 
 # Calculated, state or constant params
 q = 6 - K * P
@@ -279,21 +260,23 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 transform = T.Compose([T.ToPILImage(), T.ToTensor()])
 episode_durations = []
 episode_scores = []
-memory = DualReplayMemory(REPLAY_SIZE, history_size=calculate_delay_punishment_maximum(WIDTH ** 2))
+memory = DualReplayMemory(REPLAY_SIZE, initial_weight=M1_M2_WEIGHT_INITIAL, final_weight=M1_M2_WEIGHT_FINAL,
+                          iterations=M1_M2_WEIGHT_ITERATIONS,
+                          history_size=calculate_delay_punishment_maximum(WIDTH ** 2))
 prev_states = MinorStateMemory(4 * 2)
-EXPLORATION_decay = (EXPLORATION_START - EXPLORATION_END) / NUM_EXPLORATION_EPISODES
+EPSILON_decay = (EPSILON_START - EPSILON_END) / NUM_EPSILON_EPISODES
 turn_counter = 0
 
 if __name__ == '__main__':
     get_command_line_params()
     print("Initializing with width={}, number of episodes={} and device={}".format(WIDTH, NUM_EPISODES, device))
-    game = Game(width=WIDTH, length=LENGTH)
+    game = Game(width=WIDTH, length=LENGTH, render=True)
 
     # DQN initialization
     valid_actions = game.get_amount_of_legal_actions()
-    policy_net = DQN(WIDTH, valid_actions).to(device)
-    optimizer = optim.Adam(policy_net.parameters())
-
+    model = DQN(4 * 2, WIDTH, valid_actions).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=LR)
+    criterion = torch.nn.MSELoss()
     main()
 
     show_a_run_current_network()

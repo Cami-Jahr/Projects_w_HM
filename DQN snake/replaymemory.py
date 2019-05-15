@@ -3,7 +3,7 @@ from collections import namedtuple
 import torch
 
 Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward'))
+                        ('state', 'action', 'next_state', "terminal", 'reward'))
 
 
 class MinorStateMemory:
@@ -69,17 +69,19 @@ class DualReplayMemory:
             try:
                 memory = self.history[i]
                 backtrack_position[memory] -= 1
-                *others, reward = self.memory[memory][backtrack_position[memory]]
+                *others, terminal, reward = self.memory[memory][backtrack_position[memory]]
+                if terminal.item():  # Don't reduce values of earlier runs
+                    break
                 reward[0] = reward[0] - p
                 # Put all reduced into primary memory
                 if memory:  # Already in primary
-                    self.memory[memory][backtrack_position[memory]] = Transition(*others, reward)
+                    self.memory[memory][backtrack_position[memory]] = Transition(*others, terminal, reward)
                 else:
                     self.memory[False].pop()
                     if len(self.memory[True]) < self.capacity:
-                        self.memory[True].append(Transition(*others, reward))
+                        self.memory[True].append(Transition(*others, terminal, reward))
                     else:
-                        self.memory[True][self.position[True]] = Transition(*others, reward)
+                        self.memory[True][self.position[True]] = Transition(*others, terminal, reward)
                     self.position[False] = (self.position[False] - 1) % self.capacity
                     self.position[True] = (self.position[True] + 1) % self.capacity
             except IndexError:

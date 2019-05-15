@@ -1,7 +1,7 @@
 import pygame
 import numpy as np
-from random import sample
-from math import log, ceil
+from random import sample, randint
+from math import log
 
 
 class Game:
@@ -28,6 +28,7 @@ class Game:
         self.ai = ai
         self.score = 0
         self.score_balancer = -length
+        self.ate = False
         self.width = width
         self.height = height
         self.pixels_per_unit = fit_to_size // width
@@ -43,7 +44,7 @@ class Game:
         body_image = pygame.image.load('resources/snake.png').convert()
         apple_image = pygame.image.load('resources/apple.png').convert()
         self.snake = Snake(length, width, height, head_image, body_image)
-        self.apple = Apple(width, height, apple_image)
+        self.apple = Apple(width, height, apple_image, self.snake.body)
 
         self.prev_distance_head_to_apple = self.distance_head_to_apple()
 
@@ -72,7 +73,7 @@ class Game:
 
     def restart(self):
         self.snake.restart()
-        self.apple.restart()
+        self.apple.restart(self.snake.body)
         self.render()
 
     def render(self):
@@ -85,11 +86,11 @@ class Game:
                                    self.display_surf)
             pygame.display.flip()
             pygame.display.update()
-            self.clock.tick(20)
+            self.clock.tick(30)
 
     def distance_head_to_apple(self):
         """Using manhattan distance, euclidean distance might be better"""
-        return abs(self.snake.body[0][0] - self.apple.pos[0]) ** 2 + abs(self.snake.body[0][1] - self.apple.pos[1]) ** 2
+        return abs(self.snake.body[0][0] - self.apple.pos[0]) + abs(self.snake.body[0][1] - self.apple.pos[1])
 
     def distance_value(self, new_distance):
         return log(
@@ -97,8 +98,7 @@ class Game:
             self.snake.current_length)
 
     def get_turn_score(self):
-        """Reward + distance reward function"""
-        return self.score or self.distance_reward_value
+        return self.score + self.distance_reward_value
 
     def get_final_score(self):
         return self.score_balancer + self.snake.current_length
@@ -117,6 +117,7 @@ class Game:
         :return: (done, length, score)
         """
         self.score = 0
+        self.ate = False
         if self.ai:
             self.snake.move(move)
         else:
@@ -130,6 +131,7 @@ class Game:
         self.snake.update()
         if np.array_equal(self.snake.body[0], self.apple.pos):
             self.score = 1
+            self.ate = True
             self.snake.grow()
             self.apple.new_pos(self.snake.body)
 
@@ -144,14 +146,16 @@ class Game:
         return self.turn_result(False)
 
     def turn_result(self, crashed):
-        return crashed, self.snake.current_length, self.get_turn_score()
+        return crashed, self.ate, self.snake.current_length, self.get_turn_score()
 
 
 class Snake:
     """To handle the snake logic and render"""
 
     def __init__(self, length, width, height, head_image, body_image):
-        self.body = np.array([(x, 2) for x in range(2 + length, 2, -1)])
+        x_head = randint(1 + length, width - 4)
+        y_cord = randint(2, height - 2)
+        self.body = np.array([(x, y_cord) for x in range(x_head, x_head - length, -1)])
         self.width = width
         self.height = height
         self.head_image = head_image
@@ -163,7 +167,9 @@ class Snake:
         self.current_length = length
 
     def restart(self):
-        self.body = np.array([(x, 2) for x in range(2 + self.length, 2, -1)])
+        x_head = randint(1 + self.length, self.width - 4)
+        y_cord = randint(2, self.height - 2)
+        self.body = np.array([(x, y_cord) for x in range(x_head, x_head - self.length, -1)])
         self.direction = 2
         self.grow_pos = False
         self.current_length = self.length
@@ -206,16 +212,15 @@ class Snake:
 class Apple:
     """To handle the apple position and render"""
 
-    def __init__(self, width, height, image):
+    def __init__(self, width, height, image, snake_body):
         self.width = width
         self.height = height
         self.image = image
-        self.pos = np.array((int(.8 * width), int(.8 * height)))
         self.possible = {(i, j) for i in range(width) for j in range(height)}
+        self.pos = np.array(sample(self.possible - set(tuple(x) for x in snake_body), 1)[0])
 
-    def restart(self):
-        self.pos = np.array((int(.8 * self.width), int(.8 * self.height)))
-        self.possible = {(i, j) for i in range(self.width) for j in range(self.height)}
+    def restart(self, snake_body):
+        self.pos = np.array(sample(self.possible - set(tuple(x) for x in snake_body), 1)[0])
 
     def new_pos(self, snake_body):
         self.pos = np.array(sample(self.possible - set(tuple(x) for x in snake_body), 1)[0])
@@ -226,7 +231,6 @@ class Apple:
 
 if __name__ == '__main__':
     game = Game(ai=False, width=14, height=14, render=True)
-    points = done = False
-    while done is False:
-        done, *_ = game.execute()
-    print(points)
+    while not game.execute()[0]:
+        pass
+    print(game.get_final_score())
